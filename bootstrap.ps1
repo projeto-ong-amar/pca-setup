@@ -41,7 +41,12 @@ function Get-SystemPackageManager {
 }
 
 function Install-Package {
-  param([string]$WingetId, [string]$ChocoPkg, [string]$ScoopPkg)
+  param(
+    [string] $WingetId,
+    [string] $ChocoPkg,
+    [string] $ScoopPkg,
+    [string] $ScoopBucket
+  )
 
   switch (script:Spm) {
     "winget" {
@@ -54,6 +59,11 @@ function Install-Package {
       & choco install $ChocoPkg -y --no-progress
     }
     "scoop" {
+      # Buckets extras (ex: temurin) nao vem no install padrao do Scoop.
+      if ($ScoopBucket) {
+        Write-Info "scoop bucket add $ScoopBucket"
+        & scoop bucket add $ScoopBucket 2>&1 | Out-Null
+      }
       Write-Info "scoop install $ScoopPkg"
       & scoop install $ScoopPkg
     }
@@ -79,6 +89,7 @@ function Install-IfMissing {
     [string]   $WingetId,
     [string]   $ChocoPkg,
     [string]   $ScoopPkg,
+    [string]   $ScoopBucket,
     [string]   $VersionArgs = "--version"
   )
 
@@ -89,7 +100,7 @@ function Install-IfMissing {
   }
 
   Write-Warn "$Label ausente. Instalando..."
-  Install-Package -WingetId $WingetId -ChocoPkg $ChocoPkg -ScoopPkg $ScoopPkg
+  Install-Package -WingetId $WingetId -ChocoPkg $ChocoPkg -ScoopPkg $ScoopPkg -ScoopBucket $ScoopBucket
   Start-Sleep -Seconds 2
 
   if (Test-Cmd $Probe) {
@@ -136,14 +147,29 @@ function Invoke-Provision {
       -WingetId "EclipseAdoptium.Temurin.$javaMajor.JDK" `
       -ChocoPkg  "temurin$javaMajor" `
       -ScoopPkg  "temurin$javaMajor-jdk" `
+      -ScoopBucket "java" `
       -VersionArgs "-version"
   }
 
   Install-IfMissing -Label "Node.js LTS" -Probe "node" `
     -WingetId "OpenJS.NodeJS.LTS" -ChocoPkg "nodejs-lts" -ScoopPkg "nodejs-lts"
 
-  Install-IfMissing -Label "Maven" -Probe "mvn" `
-    -WingetId "Apache.Maven" -ChocoPkg "maven" -ScoopPkg "maven"
+  # Maven: o wrapper mvnw do projeto ja traz o Maven proprio.
+  # O Maven tambem nao existe no repositorio winget - use choco quando necessario.
+  if (Test-Path ".\mvnw.cmd") {
+    Write-Ok "Maven: wrapper mvnw presente - dispensa instalar o Maven"
+  } elseif (Test-Cmd "mvn") {
+    Write-Ok "Maven ja instalado"
+  } else {
+    Write-Warn "Maven ausente e sem wrapper mvnw. Instalando via $($script:Spm)..."
+    if ($script:Spm -eq "winget") {
+      Write-Warn "O Maven NAO esta disponivel no repositorio winget."
+      Write-Info "Instale o Chocolatey: https://chocolatey.org"
+      Write-Info "Ou versione o projeto com o wrapper mvnw (recomendado)."
+    } else {
+      Install-Package -ChocoPkg "maven" -ScoopPkg "maven"
+    }
+  }
 
   if (-not $SkipDatabase) {
     Install-IfMissing -Label "MySQL 8 Server" -Probe "mysql" `

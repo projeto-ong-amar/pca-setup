@@ -122,16 +122,13 @@ provision() {
 
   install_if_missing "Node.js LTS" node nodejs
 
-  if has mvn; then ok "Maven ja instalado ($(mvn -v 2>/dev/null | head -1))"
+  # Maven: o wrapper mvnw do projeto ja traz o Maven proprio.
+  if [[ -f ./mvnw || -f ./mvnw.cmd ]]; then
+    ok "Maven: wrapper mvnw presente - dispensa instalar o Maven"
+  elif has mvn; then
+    ok "Maven ja instalado"
   else
-    warn "Maven ausente. Instalando..."
-    case "$SPM" in
-      apt)
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y maven ;;
-      brew)   brew install maven ;;
-      *)      install_if_missing "Maven" mvn maven ;;
-    esac
+    install_if_missing "Maven" mvn maven
   fi
 
   if [[ "$SKIP_DATABASE" == true ]]; then

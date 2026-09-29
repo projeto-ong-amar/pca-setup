@@ -29,7 +29,7 @@ Provisionador **bare-metal** que instala todo o toolchain necessario e prepara o
 | **Deteccao de SO** | Windows (winget/choco/scoop), Linux (apt/dnf/yum/pacman/zypper/apk) e macOS (brew) |
 | **Java JDK 21** | Instala Eclipse Temurin (Windows/macOS) ou OpenJDK (Linux) automaticamente |
 | **Gate de Versao do JDK** | Rejeita JDKs antigos em vez de deixar o build do Spring Boot 4 quebrar em silencio |
-| **Node.js e Maven** | Instala Node LTS e Maven quando ausentes na maquina |
+| **Node.js e Maven** | Instala Node LTS quando ausente; usa o wrapper `mvnw` do projeto antes de considerar instalar o Maven |
 | **Deteccao de Projeto** | Identifica `pom.xml` (Maven) e `package.json` (Node) na pasta atual |
 | **Build Automatico** | Usa o wrapper `mvnw` quando disponivel, com fallback para o `mvn` do sistema |
 | **Idempotente** | Nunca sobrescreve `.env` existente sem permissao explicita |
@@ -109,7 +109,7 @@ npm link          # torna 'pca-setup' global
 | Comando | Descricao |
 |---|---|
 | `pca-setup check` | Verifica pre-requisitos e detecta o tipo de projeto — nao instala nada |
-| `pca-setup provision` | Instala Git, Java JDK, Node.js, Maven e MySQL ausentes no sistema |
+| `pca-setup provision` | Instala Git, Java JDK, Node.js e MySQL ausentes; Maven apenas se nao houver wrapper `mvnw` |
 | `pca-setup env` | Cria `.env` a partir de `.env.example` |
 | `pca-setup setup` | Fluxo completo: provisiona o sistema e prepara o projeto |
 | `pca-setup setup -y` | Modo nao-interativo (util para CI) |
@@ -158,7 +158,7 @@ graph TD
 
 | Etapa | Responsabilidade |
 |---|---|
-| **Provision** | Detecta o SO e o gerenciador de pacotes, instala Git, Java JDK, Node.js, Maven e MySQL ausentes |
+| **Provision** | Detecta o SO e o gerenciador de pacotes, instala Git, Java JDK, Node.js e MySQL ausentes; o Maven so e instalado quando o projeto nao tem `mvnw` |
 | **Check** | Revalida o ambiente e identifica o tipo de projeto na pasta atual |
 | **Env** | Copia `.env.example` para `.env`, preservando o arquivo existente |
 | **Deps** | Executa `npm install` (ou pnpm/yarn, conforme `packageManager` declarado) |
@@ -168,13 +168,17 @@ graph TD
 
 | Ferramenta | Versao | Windows | Linux | macOS |
 |---|---|---|---|---|
-| **Git** | latest | winget / choco / scoop | apt / dnf / yum / pacman / zypper / apk | brew |
+| **Git** | latest | `Git.Git` / choco / scoop | apt / dnf / yum / pacman / zypper / apk | brew |
 | **Java JDK** | 21 (Temurin) | `EclipseAdoptium.Temurin.21.JDK` | `openjdk-21-jdk` | `temurin@21` |
 | **Node.js** | LTS | `OpenJS.NodeJS.LTS` | `nodejs` | `nodejs` |
-| **Maven** | latest | `Apache.Maven` | `maven` | `maven` |
+| **Maven** | 3.9.x | *wrapper `mvnw` — ver nota* | `maven` | `maven` |
 | **MySQL** | 8 | `Oracle.MySQL` | `mysql-server` | `mysql` |
 
 A ordem de preferencia no Windows e `winget` > `choco` > `scoop`. No Linux, o gerenciador e detectado por `apt-get`, `dnf`, `yum`, `pacman`, `zypper` ou `apk`, nessa ordem. O macOS usa `brew`.
+
+> **Nota sobre o Maven:** o Maven **nao possui pacote no repositorio do winget** (verificado com `winget search --id Apache.Maven --exact`). Por isso o `pca-setup` prioriza o **wrapper `mvnw` versionado no projeto**, que baixa o Maven proprio sem instalar nada no sistema. Em projetos sem wrapper, o Maven e instalado via `choco install maven` (ou `apt`/`dnf`/`brew` no Unix). Com apenas winget disponivel e sem wrapper, o script orienta a instalar o Chocolatey em vez de tentar um ID inexistente.
+>
+> O Scoop exige `scoop bucket add java` antes de instalar o Temurin, porque o JDK nao esta no bucket principal. O script faz isso automaticamente.
 
 ### Comportamento do Gate de Versao do JDK
 
