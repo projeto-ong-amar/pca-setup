@@ -1,0 +1,49 @@
+{
+  "name": "pca-setup",
+  "version": "0.1.0",
+  "description": "Bootstrap do zero (bare-metal) para preparar o ambiente do Projeto AMAR em Windows, Linux e macOS",
+  "type": "module",
+  "bin": {
+    "pca-setup": "./bin/pca-setup.js"
+  },
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "keywords": [
+    "bootstrap",
+    "setup",
+    "bare-metal",
+    "projeto-amar",
+    "projeto-ong-amar",
+    "java",
+    "maven",
+    "node",
+    "windows",
+    "linux",
+    "macos"
+  ],
+  "author": "Projeto AMAR - SPTECH",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/projeto-ong-amar/pca-setup.git"
+  },
+  "bugs": {
+    "url": "https://github.com/projeto-ong-amar/pca-setup/issues"
+  },
+  "homepage": "https://github.com/projeto-ong-amar/pca-setup#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "setup": "node bin/pca-setup.js setup",
+    "check": "node bin/pca-setup.js check"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "execa": "^9.5.1",
+    "inquirer": "^12.1.0"
+  }
+}
