@@ -38,7 +38,8 @@
   },
   "scripts": {
     "setup": "node bin/pca-setup.js setup",
-    "check": "node bin/pca-setup.js check"
+    "check": "node bin/pca-setup.js check",
+    "hosting": "node bin/pca-setup.js hosting"
   },
   "dependencies": {
     "chalk": "^5.3.0",
