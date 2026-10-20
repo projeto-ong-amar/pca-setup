@@ -32,6 +32,11 @@ function Test-Admin {
 
 function Test-Cmd { param($c) return [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
+function Update-SessionPath {
+  $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+              [System.Environment]::GetEnvironmentVariable('Path', 'User')
+}
+
 # ---------- Provisioning ----------
 function Get-SystemPackageManager {
   if (Test-Cmd "winget") { return "winget" }
@@ -102,6 +107,7 @@ function Install-IfMissing {
   Write-Warn "$Label ausente. Instalando..."
   Install-Package -WingetId $WingetId -ChocoPkg $ChocoPkg -ScoopPkg $ScoopPkg -ScoopBucket $ScoopBucket
   Start-Sleep -Seconds 2
+  Update-SessionPath
 
   if (Test-Cmd $Probe) {
     Write-Ok "$Label instalado"
@@ -131,8 +137,7 @@ function Invoke-Provision {
     try {
       [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
       Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-      $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-                  [System.Environment]::GetEnvironmentVariable('Path', 'User')
+      Update-SessionPath
     } catch {
       Write-Err "Falha ao instalar Chocolatey: $_"
       throw "Gerenciador de pacotes indisponivel."
@@ -181,6 +186,7 @@ function Invoke-Provision {
       Write-Info "Ou versione o projeto com o wrapper mvnw (recomendado)."
     } else {
       Install-Package -ChocoPkg "maven" -ScoopPkg "maven"
+      Update-SessionPath
     }
   }
 
@@ -222,17 +228,27 @@ function Invoke-ProjectSetup {
   }
 
   if ($hasPkg) {
-    $pm = if (Test-Cmd "pnpm") { "pnpm" } elseif (Test-Cmd "yarn") { "yarn" } else { "npm" }
-    Write-Info "Instalando dependencias Node ($pm)"
-    if ($pm -eq "npm") { & npm install } else { & $pm install }
-    Write-Ok "Dependencias Node instaladas"
+    $pm = if (Test-Cmd "pnpm") { "pnpm" } elseif (Test-Cmd "yarn") { "yarn" } elseif (Test-Cmd "npm") { "npm" } else { $null }
+    if (-not $pm) {
+      Write-Warn "npm/pnpm/yarn ausente no PATH. Pulando dependencias Node."
+      Write-Dim "  -> Abra um novo terminal e rode o script de novo."
+    } else {
+      Write-Info "Instalando dependencias Node ($pm)"
+      & $pm install
+      Write-Ok "Dependencias Node instaladas"
+    }
   }
 
   if ($hasPom) {
-    $mvnCmd = if (Test-Path ".\mvnw.cmd") { ".\mvnw.cmd" } else { "mvn" }
-    Write-Info "Baixando dependencias Maven ($mvnCmd)"
-    if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q clean package }
-    Write-Ok "Projeto Maven pronto"
+    $mvnCmd = if (Test-Path ".\mvnw.cmd") { ".\mvnw.cmd" } elseif (Test-Cmd "mvn") { "mvn" } else { $null }
+    if (-not $mvnCmd) {
+      Write-Warn "Maven ausente no PATH e sem wrapper mvnw. Pulando build Maven."
+      Write-Dim "  -> Abra um novo terminal e rode o script de novo."
+    } else {
+      Write-Info "Baixando dependencias Maven ($mvnCmd)"
+      if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q clean package }
+      Write-Ok "Projeto Maven pronto"
+    }
   }
 
   if ($SkipBuild) { Write-Warn "Build pulado (-SkipBuild)" }
