@@ -10,6 +10,15 @@ SKIP_BUILD=false
 SKIP_DATABASE=false
 FORCE_ENV=false
 
+ORG="projeto-ong-amar"
+WORKSPACE="$HOME/projeto-ong-amar"
+# nome_local:repo_github:preparar(1/0)
+REPOS=(
+  "backend:projeto-ong-amar-backend:1"
+  "frontend:projeto-ong-amar-frontend:1"
+  "banco-de-dados:projeto-ong-amar-banco-de-dados:0"
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --java)          JAVA_VERSION="$2"; shift 2 ;;
@@ -122,14 +131,7 @@ provision() {
 
   install_if_missing "Node.js LTS" node nodejs
 
-  # Maven: o wrapper mvnw do projeto ja traz o Maven proprio.
-  if [[ -f ./mvnw || -f ./mvnw.cmd ]]; then
-    ok "Maven: wrapper mvnw presente - dispensa instalar o Maven"
-  elif has mvn; then
-    ok "Maven ja instalado"
-  else
-    install_if_missing "Maven" mvn maven
-  fi
+  # Maven: cada repo usa o wrapper mvnw (backend). Instalado no setup, se necessario.
 
   if [[ "$SKIP_DATABASE" == true ]]; then
     dim "MySQL pulado (--skip-database)"
@@ -138,9 +140,65 @@ provision() {
   fi
 }
 
+# ---------- Clone ----------
+github_access_ok() {
+  GIT_TERMINAL_PROMPT=0 git ls-remote "https://github.com/${ORG}/projeto-ong-amar-backend.git" HEAD >/dev/null 2>&1
+}
+
+ensure_git_access() {
+  github_access_ok && return 0
+
+  warn "Acesso ao GitHub necessario (repositorios privados)."
+  if ! has gh; then
+    spm_install gh || true
+  fi
+  if has gh; then
+    if ! gh auth status >/dev/null 2>&1; then
+      info "Login do GitHub (fluxo de codigo de dispositivo no navegador)..."
+      gh auth login --hostname github.com --git-protocol https --web
+    fi
+    gh auth setup-git
+    github_access_ok && { ok "Autenticacao GitHub configurada"; return 0; }
+  fi
+
+  warn "GitHub CLI indisponivel ou login falhou. Usando Personal Access Token."
+  read -rsp "Token GitHub (PAT com escopo repo): " GH_TOKEN; echo
+  git config --global credential.helper store
+  printf 'protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n' "$GH_TOKEN" | git credential approve
+  unset GH_TOKEN
+  if ! github_access_ok; then
+    err "Acesso ao GitHub falhou. Verifique o token (escopo 'repo')."
+    exit 1
+  fi
+  ok "Credencial GitHub salva (~/.git-credentials)"
+}
+
+clone_repos() {
+  title "Clonando repositorios ($WORKSPACE)"
+  has git || { err "Git ausente no PATH. Reinicie o terminal e rode de novo."; exit 1; }
+
+  ensure_git_access
+  mkdir -p "$WORKSPACE"
+
+  local entry local_name repo setup dest
+  for entry in "${REPOS[@]}"; do
+    IFS=: read -r local_name repo setup <<< "$entry"
+    dest="$WORKSPACE/$local_name"
+    if [[ -d "$dest" ]]; then
+      ok "$repo ja clonado ($dest)"
+      continue
+    fi
+    info "Clonando $repo..."
+    if ! git clone "https://github.com/${ORG}/${repo}.git" "$dest"; then
+      err "Falha ao clonar $repo."
+      exit 1
+    fi
+    ok "$repo clonado"
+  done
+}
+
 # ---------- Project setup ----------
 init_env() {
-  title "Variaveis de ambiente"
   if [[ ! -f .env.example ]]; then dim ".env.example nao encontrado. Etapa pulada."; return; fi
   if [[ -f .env && "$FORCE_ENV" == false ]]; then
     ok ".env ja existe (preservado). Use --force-env para sobrescrever."
@@ -152,40 +210,48 @@ init_env() {
   dim "Preencha os valores sensiveis no .env antes de executar o projeto."
 }
 
-project_setup() {
-  title "Preparando projeto"
-  local has_pom=false has_pkg=false
-  [[ -f pom.xml ]]     && has_pom=true
-  [[ -f package.json ]] && has_pkg=true
+setup_repo() {
+  local dir="$1" label="$2"
+  title "Preparando $label"
+  (
+    cd "$dir"
+    init_env
 
-  if [[ "$has_pom" == false && "$has_pkg" == false ]]; then
-    warn "pom.xml e package.json nao encontrados."
-    info "Execute o bootstrap na RAIZ do projeto (backend, frontend) ou na pasta que os contem."
-  fi
-
-  if [[ "$has_pkg" == true ]]; then
-    local pm="npm"
-    has pnpm && pm="pnpm"
-    has yarn && pm="yarn"
-    info "Instalando dependencias Node ($pm)"
-    if [[ "$pm" == "npm" ]]; then npm install; else "$pm" install; fi
-    ok "Dependencias Node instaladas"
-  fi
-
-  if [[ "$has_pom" == true ]]; then
-    local mvn_cmd="mvn"
-    [[ -f ./mvnw ]] && mvn_cmd="./mvnw"
-    info "Baixando dependencias Maven ($mvn_cmd)"
-    if [[ "$SKIP_BUILD" == true ]]; then
-      "$mvn_cmd" -q dependency:go-offline || true
-    else
-      "$mvn_cmd" -q clean package
+    if [[ -f package.json ]]; then
+      local pm="npm"
+      has pnpm && pm="pnpm"
+      has yarn && pm="yarn"
+      if ! has "$pm"; then
+        warn "npm/pnpm/yarn ausente no PATH. Pulando dependencias Node."
+        dim "  -> Reinicie o terminal e rode o script de novo."
+      else
+        info "Instalando dependencias Node ($pm)"
+        "$pm" install
+        ok "Dependencias Node instaladas"
+      fi
     fi
-    ok "Projeto Maven pronto"
-  fi
 
-  [[ "$SKIP_BUILD" == true ]] && warn "Build pulado (--skip-build)"
-  return 0
+    if [[ -f pom.xml ]]; then
+      local mvn_cmd=""
+      [[ -f ./mvnw ]] && mvn_cmd="./mvnw"
+      [[ -z "$mvn_cmd" ]] && has mvn && mvn_cmd="mvn"
+      if [[ -z "$mvn_cmd" ]]; then
+        warn "Maven ausente no PATH e sem wrapper mvnw. Pulando build Maven."
+        dim "  -> Reinicie o terminal e rode o script de novo."
+      else
+        info "Baixando dependencias Maven ($mvn_cmd)"
+        if [[ "$SKIP_BUILD" == true ]]; then
+          "$mvn_cmd" -q dependency:go-offline || true
+        else
+          "$mvn_cmd" -q clean package
+        fi
+        ok "Projeto Maven pronto"
+      fi
+    fi
+
+    [[ "$SKIP_BUILD" == true ]] && warn "Build pulado (--skip-build)"
+    exit 0
+  )
 }
 
 # ---------- Main ----------
@@ -194,17 +260,20 @@ high "PCA SETUP  -  Bootstrap do zero para o Projeto AMAR"
 dim "Sistema Intelligent de Gestao de Doacoes para ONGs (SPTECH)"
 echo
 
-if [[ "$SKIP_PROVISION" == true && ! -f pom.xml && ! -f package.json ]]; then
-  err "Nada a fazer: --skip-provision exige rodar dentro do projeto (pom.xml ou package.json)."
-  exit 1
-fi
-
 provision
-init_env
-project_setup
+clone_repos
+
+local_entry=""
+for local_entry in "${REPOS[@]}"; do
+  IFS=: read -r _name _repo setup <<< "$local_entry"
+  if [[ "$setup" == "1" ]]; then
+    setup_repo "$WORKSPACE/$_name" "$_name"
+  fi
+done
 
 title "CONCLUIDO"
 ok "Ambiente pronto."
-[[ -f pom.xml ]]     && info "Backend:  ./run.ps1   (ou ./mvnw spring-boot:run)"
-[[ -f package.json ]] && info "Frontend: npm run dev"
+info "Backend:  $WORKSPACE/backend   (./mvnw spring-boot:run)"
+info "Frontend: $WORKSPACE/frontend  (npm run dev)"
+info "Banco:    $WORKSPACE/banco-de-dados"
 dim "Se acabou de instalar ferramentas, reinicie o terminal para o PATH atualizar."

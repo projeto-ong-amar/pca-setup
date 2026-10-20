@@ -15,6 +15,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ---------- Config ----------
+$Org       = "projeto-ong-amar"
+$Workspace = Join-Path $HOME "projeto-ong-amar"
+$Repos = @(
+  @{ Name = "backend";        Repo = "projeto-ong-amar-backend";        Setup = $true },
+  @{ Name = "frontend";       Repo = "projeto-ong-amar-frontend";       Setup = $true },
+  @{ Name = "banco-de-dados"; Repo = "projeto-ong-amar-banco-de-dados"; Setup = $false }
+)
+
 # ---------- Output helpers ----------
 function Write-Info    { param($m) Write-Host "> $m" -ForegroundColor Cyan }
 function Write-Ok      { param($m) Write-Host "OK $m" -ForegroundColor Green }
@@ -172,23 +181,7 @@ function Invoke-Provision {
   Install-IfMissing -Label "Node.js LTS" -Probe "node" `
     -WingetId "OpenJS.NodeJS.LTS" -ChocoPkg "nodejs-lts" -ScoopPkg "nodejs-lts"
 
-  # Maven: o wrapper mvnw do projeto ja traz o Maven proprio.
-  # O Maven tambem nao existe no repositorio winget - use choco quando necessario.
-  if (Test-Path ".\mvnw.cmd") {
-    Write-Ok "Maven: wrapper mvnw presente - dispensa instalar o Maven"
-  } elseif (Test-Cmd "mvn") {
-    Write-Ok "Maven ja instalado"
-  } else {
-    Write-Warn "Maven ausente e sem wrapper mvnw. Instalando via $($script:Spm)..."
-    if ($script:Spm -eq "winget") {
-      Write-Warn "O Maven NAO esta disponivel no repositorio winget."
-      Write-Info "Instale o Chocolatey: https://chocolatey.org"
-      Write-Info "Ou versione o projeto com o wrapper mvnw (recomendado)."
-    } else {
-      Install-Package -ChocoPkg "maven" -ScoopPkg "maven"
-      Update-SessionPath
-    }
-  }
+  # Maven: cada repo usa o wrapper mvnw (backend). Instalado no setup, se necessario.
 
   if (-not $SkipDatabase) {
     Install-IfMissing -Label "MySQL 8 Server" -Probe "mysql" `
@@ -199,9 +192,61 @@ function Invoke-Provision {
   }
 }
 
+# ---------- Clone ----------
+function Test-GitHubAccess {
+  $env:GIT_TERMINAL_PROMPT = "0"
+  git ls-remote "https://github.com/$Org/projeto-ong-amar-backend.git" HEAD 2>&1 | Out-Null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-GitAccess {
+  if (Test-GitHubAccess) { return }
+
+  Write-Warn "Acesso ao GitHub necessario (repositorios privados). Configurando GitHub CLI..."
+  if (-not (Test-Cmd "gh")) {
+    Install-IfMissing -Label "GitHub CLI" -Probe "gh" `
+      -WingetId "GitHub.cli" -ChocoPkg "gh" -ScoopPkg "gh"
+  }
+  if (-not (Test-Cmd "gh")) {
+    throw "GitHub CLI indisponivel. Instale manualmente: https://cli.github.com e rode o script de novo."
+  }
+
+  gh auth status 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Info "Sera aberto o login do GitHub (fluxo de codigo de dispositivo no navegador)."
+    gh auth login --hostname github.com --git-protocol https --web
+  }
+  gh auth setup-git
+
+  if (-not (Test-GitHubAccess)) {
+    throw "Acesso ao GitHub ainda falhou apos autenticacao. Verifique as permissoes do token (escopo 'repo')."
+  }
+  $env:GIT_TERMINAL_PROMPT = $null
+  Write-Ok "Autenticacao GitHub configurada"
+}
+
+function Invoke-CloneRepos {
+  Write-Title "Clonando repositorios ($Workspace)"
+  if (-not (Test-Cmd "git")) { throw "Git ausente no PATH. Reabra o terminal e rode o script de novo." }
+
+  Ensure-GitAccess
+  New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
+
+  foreach ($r in $Repos) {
+    $dest = Join-Path $Workspace $r.Name
+    if (Test-Path $dest) {
+      Write-Ok "$($r.Repo) ja clonado ($dest)"
+      continue
+    }
+    Write-Info "Clonando $($r.Repo)..."
+    git clone "https://github.com/$Org/$($r.Repo).git" $dest
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao clonar $($r.Repo)." }
+    Write-Ok "$($r.Repo) clonado"
+  }
+}
+
 # ---------- Project setup ----------
 function Initialize-Env {
-  Write-Title "Variaveis de ambiente"
   if (-not (Test-Path ".env.example")) {
     Write-Dim ".env.example nao encontrado. Etapa pulada."
     return
@@ -216,42 +261,42 @@ function Initialize-Env {
   Write-Dim "Preencha os valores sensiveis no .env antes de executar o projeto."
 }
 
-function Invoke-ProjectSetup {
-  Write-Title "Preparando projeto"
+function Invoke-ProjectSetupIn {
+  param([string] $Dir, [string] $Label)
 
-  $hasPom = Test-Path "pom.xml"
-  $hasPkg = Test-Path "package.json"
+  Write-Title "Preparando $Label"
+  Push-Location $Dir
+  try {
+    Initialize-Env
 
-  if (-not ($hasPom -or $hasPkg)) {
-    Write-Warn "pom.xml e package.json nao encontrados."
-    Write-Info "Execute o bootstrap na RAIZ do projeto (backend, frontend) ou na pasta que os contem."
-  }
-
-  if ($hasPkg) {
-    $pm = if (Test-Cmd "pnpm") { "pnpm" } elseif (Test-Cmd "yarn") { "yarn" } elseif (Test-Cmd "npm") { "npm" } else { $null }
-    if (-not $pm) {
-      Write-Warn "npm/pnpm/yarn ausente no PATH. Pulando dependencias Node."
-      Write-Dim "  -> Abra um novo terminal e rode o script de novo."
-    } else {
-      Write-Info "Instalando dependencias Node ($pm)"
-      & $pm install
-      Write-Ok "Dependencias Node instaladas"
+    if (Test-Path "package.json") {
+      $pm = if (Test-Cmd "pnpm") { "pnpm" } elseif (Test-Cmd "yarn") { "yarn" } elseif (Test-Cmd "npm") { "npm" } else { $null }
+      if (-not $pm) {
+        Write-Warn "npm/pnpm/yarn ausente no PATH. Pulando dependencias Node."
+        Write-Dim "  -> Abra um novo terminal e rode o script de novo."
+      } else {
+        Write-Info "Instalando dependencias Node ($pm)"
+        & $pm install
+        Write-Ok "Dependencias Node instaladas"
+      }
     }
-  }
 
-  if ($hasPom) {
-    $mvnCmd = if (Test-Path ".\mvnw.cmd") { ".\mvnw.cmd" } elseif (Test-Cmd "mvn") { "mvn" } else { $null }
-    if (-not $mvnCmd) {
-      Write-Warn "Maven ausente no PATH e sem wrapper mvnw. Pulando build Maven."
-      Write-Dim "  -> Abra um novo terminal e rode o script de novo."
-    } else {
-      Write-Info "Baixando dependencias Maven ($mvnCmd)"
-      if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q clean package }
-      Write-Ok "Projeto Maven pronto"
+    if (Test-Path "pom.xml") {
+      $mvnCmd = if (Test-Path ".\mvnw.cmd") { ".\mvnw.cmd" } elseif (Test-Cmd "mvn") { "mvn" } else { $null }
+      if (-not $mvnCmd) {
+        Write-Warn "Maven ausente no PATH e sem wrapper mvnw. Pulando build Maven."
+        Write-Dim "  -> Abra um novo terminal e rode o script de novo."
+      } else {
+        Write-Info "Baixando dependencias Maven ($mvnCmd)"
+        if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q clean package }
+        Write-Ok "Projeto Maven pronto"
+      }
     }
-  }
 
-  if ($SkipBuild) { Write-Warn "Build pulado (-SkipBuild)" }
+    if ($SkipBuild) { Write-Warn "Build pulado (-SkipBuild)" }
+  } finally {
+    Pop-Location
+  }
 }
 
 # ---------- Main ----------
@@ -260,17 +305,16 @@ Write-High "PCA SETUP  -  Bootstrap do zero para o Projeto AMAR"
 Write-Dim "Sistema Intelligent de Gestao de Doacoes para ONGs (SPTECH)"
 Write-Host ""
 
-if ($SkipProvision -and -not (Test-Path "pom.xml") -and -not (Test-Path "package.json")) {
-  Write-Err "Nada a fazer: -SkipProvision exige rodar dentro do projeto (pom.xml ou package.json)."
-  exit 1
-}
-
 Invoke-Provision
-Initialize-Env
-Invoke-ProjectSetup
+Invoke-CloneRepos
+
+foreach ($r in $Repos) {
+  if ($r.Setup) { Invoke-ProjectSetupIn -Dir (Join-Path $Workspace $r.Name) -Label $r.Name }
+}
 
 Write-Title "CONCLUIDO"
 Write-Ok "Ambiente pronto."
-if (Test-Path "pom.xml")  { Write-Info "Backend:  .\run.ps1   (ou .\mvnw.cmd spring-boot:run)" }
-if (Test-Path "package.json") { Write-Info "Frontend: npm run dev" }
+Write-Info "Backend:  $Workspace\backend   (.\mvnw.cmd spring-boot:run)"
+Write-Info "Frontend: $Workspace\frontend  (npm run dev)"
+Write-Info "Banco:    $Workspace\banco-de-dados"
 Write-Dim "Se acabou de instalar ferramentas, reinicie o terminal para o PATH atualizar."

@@ -47,23 +47,26 @@ Nenhum. Em Windows, apenas o Powershell (nativo no sistema). Em Linux/macOS, ape
 
 ### Configuracao
 
-Clone o repositorio e execute o bootstrap **na raiz do projeto** que deseja preparar:
+Um unico passo: clone este repositorio e rode o bootstrap de qualquer pasta:
 
 ```bash
 git clone https://github.com/projeto-ong-amar/pca-setup.git
 cd pca-setup
 
 # Linux / macOS / WSL
-cp bootstrap.sh ~/projeto-ong-amar-backend/ && cd ~/projeto-ong-amar-backend
 ./bootstrap.sh
 ```
 
 ```powershell
 # Windows
-Copy-Item .\bootstrap.ps1 C:\projeto-ong-amar-backend\bootstrap.ps1
-cd C:\projeto-ong-amar-backend
 .\bootstrap.ps1
 ```
+
+O bootstrap:
+1. Provisiona Git, Java JDK 21, Node.js e MySQL (o que estiver faltando)
+2. Configura autenticacao do GitHub automaticamente (GitHub CLI com login no navegador, ou Personal Access Token como fallback)
+3. Clona `backend`, `frontend` e `banco-de-dados` em `~/projeto-ong-amar/`
+4. Gera o `.env`, instala as dependencias e compila backend e frontend
 
 > Se o Powershell bloquear a execucao do script, rode uma unica vez:
 >
@@ -73,13 +76,17 @@ cd C:\projeto-ong-amar-backend
 
 ### Executar
 
-```bash
-# Windows — instala o que falta e compila o projeto
+```powershell
+# Windows — instala o que falta, clona os repos e compila
 .\bootstrap.ps1
+```
 
+```bash
 # Linux / macOS / WSL
 ./bootstrap.sh
 ```
+
+Re-executar e seguro (idempotente): pastas ja clonadas e `.env` existente sao preservados.
 
 ### Opcoes
 
