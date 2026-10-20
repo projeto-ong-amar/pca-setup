@@ -48,7 +48,7 @@ function Install-Package {
     [string] $ScoopBucket
   )
 
-  switch (script:Spm) {
+  switch ($script:Spm) {
     "winget" {
       Write-Info "winget install --id $WingetId"
       & winget install --id $WingetId --exact --silent `
@@ -121,7 +121,7 @@ function Invoke-Provision {
   if (Test-Admin) { Write-Ok "Executando como Administrador" }
   else { Write-Warn "Sem privilegios de Administrador. Use 'Executar como administrador' para evitar erros de PATH." }
 
-  script:Spm = Get-SystemPackageManager
+  $script:Spm = Get-SystemPackageManager
   if (-not $script:Spm) {
     Write-Err "Nenhum gerenciador de pacotes encontrado."
     Write-Info "Instale o App Installer (winget) pela Microsoft Store e rode novamente."
