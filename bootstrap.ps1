@@ -316,8 +316,18 @@ function Invoke-ProjectSetupIn {
         Write-Dim "  -> Abra um novo terminal e rode o script de novo."
       } else {
         Write-Info "Baixando dependencias Maven ($mvnCmd)"
-        if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q clean package }
-        Write-Ok "Projeto Maven pronto"
+        # Testes exigem ambiente completo (banco, mail); o bootstrap so precisa
+        # das dependencias no cache local.
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+          if ($SkipBuild) { & $mvnCmd -q dependency:go-offline } else { & $mvnCmd -q -DskipTests clean package }
+        } finally { $ErrorActionPreference = $eap }
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warn "Build Maven falhou (exit $LASTEXITCODE). Rode '$mvnCmd clean package' no backend para ver o erro."
+        } else {
+          Write-Ok "Projeto Maven pronto"
+        }
       }
     }
 

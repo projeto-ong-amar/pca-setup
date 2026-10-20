@@ -240,12 +240,15 @@ setup_repo() {
         dim "  -> Reinicie o terminal e rode o script de novo."
       else
         info "Baixando dependencias Maven ($mvn_cmd)"
+        # Testes exigem ambiente completo (banco, mail); o bootstrap so precisa
+        # das dependencias no cache local.
         if [[ "$SKIP_BUILD" == true ]]; then
           "$mvn_cmd" -q dependency:go-offline || true
+        elif ! "$mvn_cmd" -q -DskipTests clean package; then
+          warn "Build Maven falhou. Rode '$mvn_cmd clean package' no backend para ver o erro."
         else
-          "$mvn_cmd" -q clean package
+          ok "Projeto Maven pronto"
         fi
-        ok "Projeto Maven pronto"
       fi
     fi
 
