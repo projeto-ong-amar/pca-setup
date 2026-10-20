@@ -41,6 +41,29 @@ function Test-Admin {
 
 function Test-Cmd { param($c) return [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
+# Comandos nativos (java -version, git ls-remote, gh ...) escrevem em stderr
+# mesmo com exit 0. Sob $ErrorActionPreference='Stop' o PowerShell 5.1 converte
+# isso em NativeCommandError TERMINANTE. Estes helpers baixam o EAP so durante
+# a chamada, devolvendo saida/exit code sem derrubar o script.
+function Get-NativeOutput {
+  param([scriptblock] $Cmd)
+  $eap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { (& $Cmd 2>&1 | Out-String) } catch { $null }
+  finally { $ErrorActionPreference = $eap }
+}
+
+function Test-NativeOk {
+  param([scriptblock] $Cmd)
+  $eap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $null = (& $Cmd 2>&1)
+    return ($LASTEXITCODE -eq 0)
+  } catch { return $false }
+  finally { $ErrorActionPreference = $eap }
+}
+
 function Update-SessionPath {
   $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
               [System.Environment]::GetEnvironmentVariable('Path', 'User')
@@ -76,7 +99,7 @@ function Install-Package {
       # Buckets extras (ex: temurin) nao vem no install padrao do Scoop.
       if ($ScoopBucket) {
         Write-Info "scoop bucket add $ScoopBucket"
-        & scoop bucket add $ScoopBucket 2>&1 | Out-Null
+        Get-NativeOutput { & scoop bucket add $ScoopBucket } | Out-Null
       }
       Write-Info "scoop install $ScoopPkg"
       & scoop install $ScoopPkg
@@ -86,13 +109,11 @@ function Install-Package {
 }
 
 function Get-JavaMajor {
-  try {
-    $out = (& java -version 2>&1 | Select-Object -First 1)
-    if ($out -match 'version "(\d+)(?:\.(\d+))?') {
-      if ($Matches[1] -eq "1") { return [int]$Matches[2] }
-      return [int]$Matches[1]
-    }
-  } catch {}
+  $out = Get-NativeOutput { & java -version }
+  if ($out -match 'version "(\d+)(?:\.(\d+))?') {
+    if ($Matches[1] -eq "1") { return [int]$Matches[2] }
+    return [int]$Matches[1]
+  }
   return $null
 }
 
@@ -108,7 +129,7 @@ function Install-IfMissing {
   )
 
   if (Test-Cmd $Probe) {
-    $v = (& $Probe $VersionArgs 2>&1 | Select-Object -First 1)
+    $v = (Get-NativeOutput { & $Probe $VersionArgs } | Select-Object -First 1)
     Write-Ok "$Label ja instalado ($v)"
     return
   }
@@ -195,8 +216,7 @@ function Invoke-Provision {
 # ---------- Clone ----------
 function Test-GitHubAccess {
   $env:GIT_TERMINAL_PROMPT = "0"
-  git ls-remote "https://github.com/$Org/projeto-ong-amar-backend.git" HEAD 2>&1 | Out-Null
-  return ($LASTEXITCODE -eq 0)
+  return (Test-NativeOk { & git ls-remote "https://github.com/$Org/projeto-ong-amar-backend.git" HEAD })
 }
 
 function Ensure-GitAccess {
@@ -211,8 +231,7 @@ function Ensure-GitAccess {
     throw "GitHub CLI indisponivel. Instale manualmente: https://cli.github.com e rode o script de novo."
   }
 
-  gh auth status 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) {
+  if (-not (Test-NativeOk { & gh auth status })) {
     Write-Info "Sera aberto o login do GitHub (fluxo de codigo de dispositivo no navegador)."
     gh auth login --hostname github.com --git-protocol https --web
   }
@@ -239,9 +258,18 @@ function Invoke-CloneRepos {
       continue
     }
     Write-Info "Clonando $($r.Repo)..."
-    git clone "https://github.com/$Org/$($r.Repo).git" $dest
-    if ($LASTEXITCODE -ne 0) { throw "Falha ao clonar $($r.Repo)." }
-    Write-Ok "$($r.Repo) clonado"
+    if (Test-NativeOk { & git clone "https://github.com/$Org/$($r.Repo).git" $dest }) {
+      Write-Ok "$($r.Repo) clonado"
+      continue
+    }
+    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+    Write-Warn "Clone de $($r.Repo) falhou. Reautenticando no GitHub..."
+    Ensure-GitAccess
+    if (Test-NativeOk { & git clone "https://github.com/$Org/$($r.Repo).git" $dest }) {
+      Write-Ok "$($r.Repo) clonado"
+    } else {
+      throw "Falha ao clonar $($r.Repo). Verifique o acesso ao repositorio."
+    }
   }
 }
 
