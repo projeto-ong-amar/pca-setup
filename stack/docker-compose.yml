@@ -1,0 +1,59 @@
+# Stack do Projeto AMAR: MySQL + Spring Boot + nginx (SPA + proxy /api).
+# Uso: pca-setup hosting --stack <pca-setup>/stack   (gera o .env e sobe).
+#
+# Build contexts (BACKEND_DIR/FRONTEND_DIR) e o caminho dos Dockerfiles
+# (STACK_DIR) vem do ambiente; o comando 'hosting' os exporta. Para rodar
+# 'docker compose' manualmente, defina as tres variaveis (ver .env.example).
+#
+# O .env e a fonte dos segredos e da configuracao da app (gerado pelo hosting).
+
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: projeto_amar
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build:
+      context: ${BACKEND_DIR}
+      dockerfile: ${STACK_DIR}/backend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://db:3306/projeto_amar?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true
+      # O perfil 'prod' fixa estes valores em application-prod.properties.
+      # Como env var eles tem precedencia maior, permitindo o .env controlar
+      # HTTPS/cookie (necessario para rodar em HTTP local via nginx same-origin).
+      SECURITY_CORS_ALLOWED_ORIGINS: ${FRONTEND_ORIGIN}
+      SECURITY_COOKIE_SECURE: ${COOKIE_SECURE}
+      SECURITY_TRANSPORT_REQUIRE_HTTPS: ${REQUIRE_HTTPS}
+
+  frontend:
+    build:
+      context: ${FRONTEND_DIR}
+      dockerfile: ${STACK_DIR}/frontend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  dbdata:
