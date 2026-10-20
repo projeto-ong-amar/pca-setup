@@ -123,12 +123,25 @@ function Invoke-Provision {
 
   $script:Spm = Get-SystemPackageManager
   if (-not $script:Spm) {
-    Write-Err "Nenhum gerenciador de pacotes encontrado."
-    Write-Info "Instale o App Installer (winget) pela Microsoft Store e rode novamente."
-    Write-Info "Ou instale Chocolatey: Set-ExecutionPolicy RemoteSigned -Scope ProcessCurrentUser"
-    Write-Info "    [System.Net.ServicePointManager]::SecurityProtocol = 'TLS12'"
-    Write-Info "    iex ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
-    throw "Gerenciador de pacotes indisponivel."
+    Write-Warn "winget/choco/scoop ausentes. Instalando Chocolatey..."
+    if (-not (Test-Admin)) {
+      Write-Err "Instalar Chocolatey exige Administrador."
+      throw "Gerenciador de pacotes indisponivel."
+    }
+    try {
+      [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+      Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+      $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                  [System.Environment]::GetEnvironmentVariable('Path', 'User')
+    } catch {
+      Write-Err "Falha ao instalar Chocolatey: $_"
+      throw "Gerenciador de pacotes indisponivel."
+    }
+    $script:Spm = Get-SystemPackageManager
+    if (-not $script:Spm) {
+      Write-Err "Chocolatey instalado, mas nao visivel no PATH. Abra um novo terminal e rode de novo."
+      throw "Gerenciador de pacotes indisponivel."
+    }
   }
   Write-Info "Gerenciador de pacotes do SO: $($script:Spm)"
 
